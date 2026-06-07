@@ -665,6 +665,14 @@
         .icon-accent { stroke: var(--accent-cyan); fill: none; }
         .icon-blue { stroke: var(--accent-blue); fill: none; }
         .icon-orange { stroke: var(--accent-orange); fill: none; }
+        
+        /* Collapsible Styling */
+        summary::-webkit-details-marker {
+            display: none;
+        }
+        summary {
+            list-style: none;
+        }
     </style>
 </head>
 <body>
@@ -672,7 +680,7 @@
     <!-- Top Header -->
     <header class="header">
         <div class="header-title">
-            <h1>วิสาหกิจชุมชนเสขะธรรม <span>• Smart Control</span></h1>
+            <h1>Eve_Monitor2026 <span>• Smart Control</span></h1>
             <p>ระบบควบคุมและติดตามข้อมูลอัจฉริยะ ต.ห้วยกะปิ อ.เมือง จ.ชลบุรี</p>
         </div>
         <div class="header-controls">
@@ -862,6 +870,15 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- MQTT Live Log Console -->
+            <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px var(--shadow); margin-top: 25px;">
+                <h3 class="section-title" style="margin-bottom: 15px;">
+                    <span>MQTT Live Log Console (สัญญาณเชื่อมต่อสด)</span>
+                    <span style="font-size: 11px; font-weight: normal; color: var(--accent-cyan); cursor: pointer;" onclick="clearMqttConsole()">[ล้างล็อกหน้าจอ]</span>
+                </h3>
+                <div id="mqtt-console" style="background: #050811; border: 1px solid var(--border-color); border-radius: 8px; padding: 15px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #39ff14; height: 160px; overflow-y: auto; white-space: pre-wrap; box-sizing: border-box; line-height: 1.6;">[System] Live log console ready. Waiting for MQTT broker connection...</div>
+            </div>
         </div>
         
         <!-- ==================== TAB 2: EGG HARVESTING ==================== -->
@@ -996,6 +1013,36 @@
             <div class="chart-container">
                 <canvas id="history-chart"></canvas>
             </div>
+            
+            <!-- Collapsible Raw Data Table -->
+            <details style="margin-top: 25px; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; box-shadow: 0 4px 12px var(--shadow);">
+                <summary style="font-size: 16px; font-weight: 600; cursor: pointer; color: var(--accent-cyan); outline: none; list-style: none; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+                    <span style="display: flex; align-items: center; gap: 8px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        แสดงตารางข้อมูลดิบย้อนหลัง (30 รายการล่าสุด)
+                    </span>
+                    <span style="font-size: 12px; font-weight: normal; color: var(--text-secondary);" id="toggle-lbl">คลิกเพื่อ [เปิดแสดงตาราง]</span>
+                </summary>
+                <div style="overflow-x: auto; margin-top: 20px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th>เวลาบันทึก</th>
+                                <th>ห้อง 1 อุณหภูมิ (°C)</th>
+                                <th>ห้อง 1 ความชื้น (%)</th>
+                                <th>ห้อง 2 อุณหภูมิ (°C)</th>
+                                <th>อุณหภูมิสูงสุด (°C)</th>
+                                <th>ความชื้นสูงสุด (%)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="raw-table-body">
+                            <tr>
+                                <td colspan="6" style="text-align: center; color: var(--text-secondary);">ยังไม่มีข้อมูล/กำลังดาวน์โหลด...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
         </div>
     </div>
     
@@ -1019,17 +1066,39 @@
         let weatherData = { temp: 0.0, humi: 0 };
         let eggRecords = [];
         
+        // Console logging helper
+        function logMqttEvent(source, msg) {
+            const consoleBox = document.getElementById('mqtt-console');
+            if (!consoleBox) return;
+            const timeStr = new Date().toLocaleTimeString('th-TH');
+            
+            let payloadText = typeof msg === 'object' ? JSON.stringify(msg) : msg;
+            consoleBox.innerText += `\n${timeStr} [${source}] ${payloadText}`;
+            
+            // Limit lines to 100 to prevent performance lag
+            const lines = consoleBox.innerText.split('\n');
+            if (lines.length > 100) {
+                consoleBox.innerText = lines.slice(lines.length - 100).join('\n');
+            }
+            
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+        
+        function clearMqttConsole() {
+            const consoleBox = document.getElementById('mqtt-console');
+            if (consoleBox) {
+                consoleBox.innerText = "[Console cleared]";
+            }
+        }
+        
         // Tab switching
         function openTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             
             document.getElementById(tabId).classList.add('active');
-            
-            // Find button targeting this tab
             event.currentTarget.classList.add('active');
             
-            // Trigger specific page loads
             if (tabId === 'egg-log') {
                 loadEggRecords();
             } else if (tabId === 'presets') {
@@ -1049,7 +1118,7 @@
                 document.documentElement.setAttribute('data-theme', 'dark');
                 localStorage.setItem('theme', 'dark');
             }
-            if (chartInstance) loadChartData(); // redraw chart with new colors
+            if (chartInstance) loadChartData(); 
         });
         
         // Load theme from cache
@@ -1062,12 +1131,25 @@
         // Set default date in form
         document.getElementById('egg-date').valueAsDate = new Date();
         
+        // Details summary toggle text handler
+        const detailsEl = document.querySelector('details');
+        const toggleLbl = document.getElementById('toggle-lbl');
+        if (detailsEl && toggleLbl) {
+            detailsEl.addEventListener('toggle', () => {
+                if (detailsEl.open) {
+                    toggleLbl.innerText = "คลิกเพื่อ [ซ่อนตาราง]";
+                } else {
+                    toggleLbl.innerText = "คลิกเพื่อ [เปิดแสดงตาราง]";
+                }
+            });
+        }
+        
         // ─────────────────────────────────────────────────────────────
         //  MQTT: Real-Time Connection
         // ─────────────────────────────────────────────────────────────
         function initMQTT() {
             const url = `wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}/mqtt`;
-            console.log("Connecting to MQTT: " + url);
+            logMqttEvent("System", `Connecting to ${MQTT_CONFIG.host}...`);
             
             mqttClient = mqtt.connect(url, {
                 clientId: MQTT_CONFIG.clientId,
@@ -1078,18 +1160,21 @@
             });
             
             mqttClient.on('connect', () => {
-                console.log("MQTT Connected!");
-                document.getElementById('conn-dot').style.background_color = '#10b981';
+                logMqttEvent("Broker", "Connected to TLS port 8884 successfully.");
                 document.getElementById('conn-dot').style.backgroundColor = '#10b981';
                 document.getElementById('conn-text').innerText = "Connected";
                 
                 mqttClient.subscribe(MQTT_CONFIG.topicData);
+                logMqttEvent("System", `Subscribed to topic: ${MQTT_CONFIG.topicData}`);
             });
             
             mqttClient.on('message', (topic, payload) => {
+                const msgStr = payload.toString();
+                logMqttEvent("Received", `Topic: ${topic} -> ${msgStr}`);
+                
                 if (topic === MQTT_CONFIG.topicData) {
                     try {
-                        const data = JSON.parse(payload.toString());
+                        const data = JSON.parse(msgStr);
                         updateRealtimeDashboard(data);
                     } catch(e) {
                         console.error("Failed to parse JSON MQTT message: " + e);
@@ -1098,8 +1183,13 @@
             });
             
             mqttClient.on('close', () => {
+                logMqttEvent("Broker", "Connection closed.");
                 document.getElementById('conn-dot').style.backgroundColor = '#ef4444';
                 document.getElementById('conn-text').innerText = "Disconnected";
+            });
+            
+            mqttClient.on('error', (err) => {
+                logMqttEvent("Error", err.toString());
             });
         }
         
@@ -1170,6 +1260,7 @@
         // ─────────────────────────────────────────────────────────────
         function loadWeatherData() {
             const url = `${GAS_URL}?action=weather`;
+            console.log("[Weather] Fetching Open-Meteo Proxy...");
             
             fetch(url)
                 .then(res => res.json())
@@ -1259,12 +1350,10 @@
                         return;
                     }
                     
-                    // Sort descending by date
                     eggRecords.sort((a,b) => b.date.localeCompare(a.date));
                     
                     eggRecords.forEach(r => {
                         const tr = document.createElement('tr');
-                        
                         const timeLogged = r.timestamp ? new Date(r.timestamp).toLocaleString('th-TH') : '--:--';
                         
                         tr.innerHTML = `<td><b>${r.date}</b></td>` +
@@ -1310,7 +1399,7 @@
         function exportEggsToCSV() {
             if (eggRecords.length === 0) return alert("ไม่มีข้อมูลที่สามารถนำออกได้");
             
-            let csv = "\uFEFF"; // BOM for Excel UTF-8 representation
+            let csv = "\uFEFF"; 
             csv += "วันที่,ยอดผลิต(ฟอง),เวลาบันทึก\r\n";
             
             eggRecords.forEach(r => {
@@ -1322,11 +1411,16 @@
             const link = document.createElement("a");
             const url = URL.createObjectURL(blob);
             link.setAttribute("href", url);
-            link.setAttribute("download", `egg_production_report_${new_Date().toISOString().slice(0,10)}.csv`);
+            link.setAttribute("download", `egg_production_report_${new Date().toISOString().slice(0,10)}.csv`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+        }
+        
+        // Custom dates formatter
+        function getFmtDate() {
+            return new Date().toISOString().slice(0,10);
         }
         
         function exportEggsToPDF() {
@@ -1338,7 +1432,6 @@
             doc.text("รายงานการเก็บผลผลิตไข่ประจำวัน - Eve_Monitor2026", 14, 15);
             doc.text("ที่อยู่ ต.ห้วยกะปิ อ.เมือง จ.ชลบุรี", 14, 22);
             
-            // Build table rows
             const body = eggRecords.map(r => [
                 r.date,
                 r.production_eggs + " ฟอง",
@@ -1353,7 +1446,7 @@
                 headStyles: { fillColor: [26, 58, 92] }
             });
             
-            doc.save(`egg_report_${new_Date().toISOString().slice(0,10)}.pdf`);
+            doc.save(`egg_report_${getFmtDate()}.pdf`);
         }
         
         // ─────────────────────────────────────────────────────────────
@@ -1384,12 +1477,10 @@
             const temp = document.getElementById(`temp-prog-${prog}`).value;
             const hyst = document.getElementById(`hyst-prog-${prog}`).value;
             
-            // 1. Send via HTTP to Google Sheets
             fetch(`${GAS_URL}?action=save_program&program=${prog}&temp=${temp}&hyst=${hyst}`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'ok') {
-                        // 2. Publish via MQTT command to ESP32
                         if (mqttClient && mqttClient.connected) {
                             const cmd = JSON.stringify({
                                 action: "save_program",
@@ -1398,6 +1489,7 @@
                                 hysteresis: parseFloat(hyst)
                             });
                             mqttClient.publish(MQTT_CONFIG.topicCommand, cmd);
+                            logMqttEvent("Publish", `Sent: ${cmd}`);
                         }
                         alert(`บันทึกโปรแกรมที่ ${prog} สำเร็จ!`);
                     } else {
@@ -1408,18 +1500,17 @@
         }
         
         function activateProgram(prog) {
-            // 1. Send via HTTP to Google Sheets
             fetch(`${GAS_URL}?action=select_program&program=${prog}`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'ok') {
-                        // 2. Publish via MQTT command to ESP32
                         if (mqttClient && mqttClient.connected) {
                             const cmd = JSON.stringify({
                                 action: "select_program",
                                 program: prog
                             });
                             mqttClient.publish(MQTT_CONFIG.topicCommand, cmd);
+                            logMqttEvent("Publish", `Sent: ${cmd}`);
                         }
                         updateActiveProgramHighlight(prog);
                         if (prog === 0) {
@@ -1447,12 +1538,13 @@
         }
         
         // ─────────────────────────────────────────────────────────────
-        //  REPORTS: Graph Loading (Chart.js)
+        //  REPORTS: Graph Loading & Raw Data Table (Chart.js)
         // ─────────────────────────────────────────────────────────────
         function loadChartData() {
             const chartSelect = document.getElementById('chart-select').value;
             const action = chartSelect === 'daily' ? 'daily' : 'monthly';
             
+            // Load Charts
             fetch(`${GAS_URL}?action=${action}`)
                 .then(res => res.json())
                 .then(data => {
@@ -1474,6 +1566,51 @@
                     drawChart(labels, temp1, temp2, humi1);
                 })
                 .catch(err => console.error("Error loading chart data: " + err));
+                
+            // Load Collapsible Raw Data Table (latest 30 rows)
+            loadRawDataTable();
+        }
+        
+        function loadRawDataTable() {
+            const rawTableBody = document.getElementById('raw-table-body');
+            rawTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">กำลังดาวน์โหลดตารางข้อมูลดิบ...</td></tr>';
+            
+            fetch(`${GAS_URL}?action=raw&limit=30`)
+                .then(res => res.json())
+                .then(data => {
+                    rawTableBody.innerHTML = '';
+                    const rows = data.rows || [];
+                    
+                    if (rows.length === 0) {
+                        rawTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">ไม่มีข้อมูลดิบแสดงผล</td></tr>';
+                        return;
+                    }
+                    
+                    // Sort descending by time
+                    rows.sort((a, b) => b.time.localeCompare(a.time));
+                    
+                    rows.forEach(r => {
+                        const tr = document.createElement('tr');
+                        
+                        const t1 = r.temp_Room1 !== undefined && r.temp_Room1 !== "ERR" && r.temp_Room1 !== "" ? parseFloat(r.temp_Room1).toFixed(1) + " °C" : "ERR";
+                        const h1 = r.humidity_Room1 !== undefined && r.humidity_Room1 !== "ERR" && r.humidity_Room1 !== "" ? parseFloat(r.humidity_Room1).toFixed(1) + " %" : "ERR";
+                        const t2 = r.temp_Room2 !== undefined && r.temp_Room2 !== "ERR" && r.temp_Room2 !== "" ? parseFloat(r.temp_Room2).toFixed(1) + " °C" : "ERR";
+                        
+                        const max_t = r.max_temp !== undefined && r.max_temp !== "" ? parseFloat(r.max_temp).toFixed(1) + " °C" : "0.0 °C";
+                        const max_h = r.max_humidity !== undefined && r.max_humidity !== "" ? parseFloat(r.max_humidity).toFixed(1) + " %" : "0.0 %";
+                        
+                        tr.innerHTML = `<td><b>${r.time}</b></td>` +
+                                       `<td>${t1}</td>` +
+                                       `<td>${h1}</td>` +
+                                       `<td>${t2}</td>` +
+                                       `<td>${max_t}</td>` +
+                                       `<td>${max_h}</td>`;
+                        rawTableBody.appendChild(tr);
+                    });
+                })
+                .catch(err => {
+                    rawTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--accent-red);">เกิดข้อผิดพลาดในการโหลดตารางข้อมูลดิบ</td></tr>';
+                });
         }
         
         function safeParse(val) {
@@ -1546,7 +1683,7 @@
                             type: 'linear',
                             position: 'right',
                             title: { display: true, text: 'ความชื้น (%)', color: labelColor },
-                            grid: { drawOnChartArea: false }, // avoid overlapping grids
+                            grid: { drawOnChartArea: false }, 
                             ticks: { color: labelColor }
                         }
                     },
@@ -1563,7 +1700,6 @@
         window.onload = () => {
             initMQTT();
             loadWeatherData();
-            // Fetch weather every 10 minutes
             setInterval(loadWeatherData, 600000);
         };
     </script>
