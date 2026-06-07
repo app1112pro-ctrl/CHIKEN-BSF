@@ -1,924 +1,165 @@
+// ════════════════════════════════════════════════════════════
+//  TEMP_SAKATUM_2026 - Apps Script v1.1
+//  Google Sheets Backend with Egg Logging & Preset Programs
+const SHEET_WEATHER     = 'WeatherData';
+const SHEET_EGGS        = 'EggProduction';
+const SHEET_SETTINGS    = 'SystemSettings';
+const SHEET_BSF         = 'BSFProduction';
+const WEATHER_LAT       = 13.306398386066864;
+const WEATHER_LON       = 100.97452196011031;
+    // 6. SystemSettings
+    const settingsSheet = getOrCreate(SHEET_SETTINGS, ['program', 'target_temp', 'hysteresis', 'is_active']);
+    
+    // 7. BSFProduction
+    getOrCreate(SHEET_BSF, ['date', 'production_kg', 'notes', 'timestamp']);
+    
+    // Seed default programs if sheet is empty
+    if (settingsSheet.getLastRow() <= 1) {
+      settingsSheet.appendRow(['1', '35.0', '1.0', 'FALSE']);
+    if (data.action === 'add_egg') {
+      return handleAddEggJson(data);
+    }
+    if (data.action === 'add_bsf') {
+      return handleAddBsfJson(data);
+    }
+    if (data.action === 'save_program') {
+      return handleSaveProgramJson(data);
+    }
+  // เพิ่มการรองรับ GET สำหรับบันทึกและแสดงผล
+  if (action === 'add_egg') return handleAddEggGet(e);
+  if (action === 'get_eggs') return handleGetEggs(e);
+  if (action === 'add_bsf') return handleAddBsfGet(e);
+  if (action === 'get_bsf') return handleGetBsf(e);
+  if (action === 'save_program') return handleSaveProgramGet(e);
+  if (action === 'select_program') return handleSelectProgramGet(e);
+  if (action === 'get_settings') return handleGetSettings(e);
+}
+// ─────────────────────────────────────────────────────────────
+//  BSF Logging Handlers
+// ─────────────────────────────────────────────────────────────
+function handleAddBsfGet(e) {
+  const date = e.parameter.date;
+  const kg = safeFloat(e.parameter.kg || '0');
+  const notes = e.parameter.notes || '';
+  return addBsfRecord(date, kg, notes);
+}
+function handleAddBsfJson(data) {
+  const date = data.date;
+  const kg = safeFloat(data.kg || '0');
+  const notes = data.notes || '';
+  return addBsfRecord(date, kg, notes);
+}
+function addBsfRecord(date, kg, notes) {
+  try {
+    if (!date) return respond({ status: 'error', msg: 'Date parameter is required' });
+    
+    const sheet = getOrCreate(SHEET_BSF, ['date', 'production_kg', 'notes', 'timestamp']);
+    const data = sheet.getDataRange().getValues();
+    let updated = false;
+    
+    for (let i = 1; i < data.length; i++) {
+      if (formatDateStr(data[i][0]) === date) {
+        sheet.getRange(i + 1, 2).setValue(kg);
+        sheet.getRange(i + 1, 3).setValue(notes);
+        sheet.getRange(i + 1, 4).setValue(new Date());
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) {
+      sheet.appendRow([date, kg, notes, new Date()]);
+    }
+    return respond({ status: 'ok', msg: 'BSF production logged successfully' });
+  } catch(err) {
+    return respond({ status: 'error', msg: err.toString() });
+  }
+}
+function handleGetBsf(e) {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_BSF);
+    if (!sheet || sheet.getLastRow() <= 1) return respond({ rows: [] });
+    
+    const limit = parseInt(e.parameter.limit || '100');
+    const data = sheet.getDataRange().getValues();
+    const hdrs = data[0];
+    const rows = data.slice(1).slice(-limit).map(r => {
+      const obj = {};
+      hdrs.forEach((h, i) => {
+        if (i === 0) {
+          obj[h] = formatDateStr(r[i]); // format date nicely
+        } else {
+          obj[h] = r[i];
+        }
+      });
+      return obj;
+    });
+    return respond({ rows });
+  } catch(err) {
+    return respond({ rows: [], error: err.toString() });
+  }
+}
+// ─────────────────────────────────────────────────────────────
+//  Preset Program Settings Handlers
+// ─────────────────────────────────────────────────────────────
+function handleSaveProgramGet(e) {
+    .setMimeType(ContentService.MimeType.JSON);
+}
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eve_Monitor2026 - Smart Drying & Weather Station</title>
-    
-    <!-- Google Fonts: IBM Plex Sans Thai for standard text & IBM Plex Mono for digits -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Chart.js, MQTT.js, jsPDF & AutoTable via CDNs -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-    
-    <style>
-        :root {
-            /* Dark Theme Variables */
-            --bg-color: #0b0f1a;
-            --card-bg: #151d30;
-            --border-color: #1f2c4a;
-            --text-primary: #f0f4f8;
-            --text-secondary: #8c9fc2;
-            --accent-cyan: #00ffcc;
-            --accent-blue: #00d2ff;
-            --accent-orange: #ff9500;
-            --accent-red: #ff3b30;
-            --accent-green: #10b981;
-            --tab-active: #00ffcc;
-            --tab-inactive: #4e5d78;
-            --shadow: rgba(0, 0, 0, 0.4);
-        }
-        
-        [data-theme="light"] {
-            /* Light Theme Variables */
-            --bg-color: #f3f4f6;
-            --card-bg: #ffffff;
-            --border-color: #e5e7eb;
-            --text-primary: #111827;
-            --text-secondary: #4b5563;
-            --accent-cyan: #0d9488;
-            --accent-blue: #0284c7;
-            --accent-orange: #ea580c;
-            --accent-red: #dc2626;
-            --accent-green: #059669;
-            --tab-active: #0d9488;
-            --tab-inactive: #6b7280;
-            --shadow: rgba(0, 0, 0, 0.05);
-        }
-        
-        body {
-            font-family: 'IBM Plex Sans Thai', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            margin: 0;
-            padding: 0;
-            transition: background-color 0.3s, color 0.3s;
-        }
-        
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px 40px;
-            background: var(--card-bg);
-            border-bottom: 1px solid var(--border-color);
-            box-shadow: 0 4px 12px var(--shadow);
-        }
-        
-        .header-title h1 {
-            margin: 0;
-            font-size: 22px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .header-title h1 span {
-            color: var(--accent-cyan);
-        }
-        
-        .header-title p {
-            margin: 5px 0 0 0;
-            font-size: 13px;
-            color: var(--text-secondary);
-        }
-        
-        .header-controls {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        
-        /* Theme Toggle switch */
-        .theme-switch {
-            position: relative;
-            display: inline-block;
-            width: 48px;
-            height: 24px;
-        }
-        
-        .theme-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .4s;
-            border-radius: 24px;
-        }
-        
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px;
-            width: 18px;
-            left: 3px;
-            bottom: 3px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
-        }
-        
-        input:checked + .slider {
-            background-color: var(--accent-cyan);
-        }
-        
-        input:checked + .slider:before {
-            transform: translateX(24px);
-        }
-        
-        /* Container and layout */
-        .container {
-            padding: 30px 40px;
-            max-width: 1280px;
-            margin: 0 auto;
-        }
-        
-        /* Tabs styles */
-        .tabs-nav {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 10px;
-        }
-        
-        .tab-btn {
-            background: none;
-            border: none;
-            color: var(--tab-inactive);
-            font-family: inherit;
-            font-size: 16px;
-            font-weight: 600;
-            padding: 10px 20px;
-            cursor: pointer;
-            border-radius: 6px;
-            transition: all 0.2s ease-in-out;
-            position: relative;
-        }
-        
-        .tab-btn:hover {
-            color: var(--text-primary);
-            background-color: rgba(255, 255, 255, 0.02);
-        }
-        
-        .tab-btn.active {
-            color: var(--tab-active);
-            background-color: rgba(0, 255, 204, 0.08);
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-            animation: fadeIn 0.4s ease;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        /* Metric cards grid */
-        .grid-metrics {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
-        .metric-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 4px 12px var(--shadow);
-            position: relative;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }
-        
-        .metric-card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            color: var(--text-secondary);
-            font-size: 14px;
-            font-weight: 500;
-        }
-        
-        .metric-card-value {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 38px;
-            font-weight: 700;
-            margin: 15px 0 5px 0;
-            color: var(--text-primary);
-        }
-        
-        .metric-card-unit {
-            font-size: 18px;
-            font-weight: 400;
-            margin-left: 2px;
-        }
-        
-        .metric-card-footer {
-            font-size: 12px;
-            color: var(--text-secondary);
-            margin-top: 5px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        
-        /* Card Status Indicator */
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-        
-        .status-ok { background-color: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
-        .status-err { background-color: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
-        
-        /* Weather and comparison section */
-        .grid-weather-comparison {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 25px;
-            margin-bottom: 30px;
-        }
-        
-        @media (max-width: 900px) {
-            .grid-weather-comparison {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        .weather-card, .comparison-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 12px var(--shadow);
-        }
-        
-        .section-title {
-            font-size: 18px;
-            font-weight: 600;
-            margin-top: 0;
-            margin-bottom: 20px;
-            border-left: 4px solid var(--accent-cyan);
-            padding-left: 10px;
-            color: var(--text-primary);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .weather-info {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-        
-        .weather-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.02);
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-        }
-        
-        .weather-item-text p {
-            margin: 0;
-            font-size: 12px;
-            color: var(--text-secondary);
-        }
-        
-        .weather-item-text h4 {
-            margin: 2px 0 0 0;
-            font-size: 15px;
-            font-family: 'IBM Plex Mono', monospace;
-            font-weight: 600;
-        }
-        
-        /* Double-sided comparison bar styling */
-        .comparison-item {
-            margin-bottom: 25px;
-        }
-        
-        .comparison-item:last-child {
-            margin-bottom: 0;
-        }
-        
-        .comparison-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 13px;
-            color: var(--text-secondary);
-            margin-bottom: 8px;
-        }
-        
-        .comparison-label-title {
-            font-weight: 600;
-            color: var(--text-primary);
-            text-transform: uppercase;
-        }
-        
-        .comparison-track {
-            display: flex;
-            height: 32px;
-            background-color: rgba(255, 255, 255, 0.03);
-            border-radius: 16px;
-            overflow: hidden;
-            border: 1px solid var(--border-color);
-            position: relative;
-        }
-        
-        .comparison-half {
-            width: 50%;
-            height: 100%;
-            display: flex;
-            position: relative;
-        }
-        
-        .comparison-half-left {
-            justify-content: flex-end;
-        }
-        
-        .comparison-half-right {
-            justify-content: flex-start;
-        }
-        
-        .comparison-divider {
-            width: 2px;
-            background-color: var(--bg-color);
-            height: 100%;
-            z-index: 10;
-        }
-        
-        .comparison-fill-left {
-            height: 100%;
-            background: linear-gradient(to left, var(--accent-orange), var(--accent-red));
-            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-            padding-left: 15px;
-            box-sizing: border-box;
-            border-top-left-radius: 16px;
-            border-bottom-left-radius: 16px;
-        }
-        
-        .comparison-fill-right {
-            height: 100%;
-            background: linear-gradient(to right, var(--accent-blue), var(--accent-cyan));
-            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            padding-right: 15px;
-            box-sizing: border-box;
-            border-top-right-radius: 16px;
-            border-bottom-right-radius: 16px;
-        }
-        
-        .comp-val {
-            font-family: 'IBM Plex Mono', monospace;
-            font-weight: 600;
-            font-size: 13px;
-            color: #ffffff;
-            text-shadow: 0 1px 3px rgba(0,0,0,0.5);
-            white-space: nowrap;
-        }
-        
-        /* Egg Harvesting Styling */
-        .egg-layout {
-            display: grid;
-            grid-template-columns: 320px 1fr;
-            gap: 25px;
-        }
-        
-        @media (max-width: 800px) {
-            .egg-layout {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        .form-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 12px var(--shadow);
-            height: fit-content;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--text-secondary);
-        }
-        
-        .form-group input, .form-group select {
-            width: 100%;
-            padding: 10px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            box-sizing: border-box;
-            font-family: inherit;
-            font-size: 14px;
-            transition: border-color 0.2s;
-        }
-        
-        .form-group input:focus, .form-group select:focus {
-            border-color: var(--accent-cyan);
-            outline: none;
-        }
-        
-        .btn {
-            background-color: var(--accent-cyan);
-            color: #0b0f1a;
-            border: none;
-            padding: 12px 20px;
-            font-family: inherit;
-            font-weight: 600;
-            font-size: 14px;
-            border-radius: 6px;
-            cursor: pointer;
-            width: 100%;
-            transition: all 0.2s;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .btn:hover {
-            opacity: 0.9;
-            box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
-        }
-        
-        .btn-secondary {
-            background-color: rgba(255, 255, 255, 0.05);
-            color: var(--text-primary);
-            border: 1px solid var(--border-color);
-        }
-        
-        .btn-secondary:hover {
-            background-color: rgba(255, 255, 255, 0.1);
-            box-shadow: none;
-        }
-        
-        .export-btns {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 15px;
-        }
-        
-        /* Table Styling */
-        .table-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 12px var(--shadow);
-            overflow-x: auto;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-        }
-        
-        th {
-            padding: 12px 16px;
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            border-bottom: 2px solid var(--border-color);
-        }
-        
-        td {
-            padding: 12px 16px;
-            font-size: 14px;
-            border-bottom: 1px solid var(--border-color);
-            color: var(--text-primary);
-        }
-        
-        tr:last-child td {
-            border-bottom: none;
-        }
-        
-        /* Preset Programs Layout */
-        .programs-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-        
-        .program-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 12px var(--shadow);
-            position: relative;
-            transition: all 0.3s;
-        }
-        
-        .program-card.active {
-            border-color: var(--accent-cyan);
-            box-shadow: 0 0 15px rgba(0, 255, 204, 0.15);
-        }
-        
-        .program-badge {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            background-color: var(--accent-cyan);
-            color: #0b0f1a;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            display: none;
-        }
-        
-        .program-card.active .program-badge {
-            display: block;
-        }
-        
-        .program-title {
-            font-size: 18px;
-            font-weight: 700;
-            margin-top: 0;
-            margin-bottom: 15px;
-            color: var(--text-primary);
-        }
-        
-        .program-controls {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
-        
-        .standby-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 4px 12px var(--shadow);
-            margin-bottom: 25px;
-        }
-        
-        .standby-card.active {
-            border-color: var(--accent-red);
-            box-shadow: 0 0 15px rgba(255, 59, 48, 0.15);
-        }
-        
-        .standby-text h3 {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 700;
-        }
-        
-        .standby-text p {
-            margin: 4px 0 0 0;
-            font-size: 13px;
-            color: var(--text-secondary);
-        }
-        
-        .btn-standby {
-            background-color: var(--accent-red);
-            color: white;
-            width: auto;
-            min-width: 140px;
-        }
-        
-        .btn-standby:hover {
-            box-shadow: 0 0 10px rgba(255, 59, 48, 0.3);
-        }
-        
-        /* Reports tab styling */
-        .chart-container {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 12px var(--shadow);
-            margin-bottom: 25px;
-            position: relative;
-            height: 400px;
-        }
-        
-        /* Pulsing fan animation */
-        @keyframes rotate-fan {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-        
-        .fan-icon-animated {
-            animation: rotate-fan 2s linear infinite;
-        }
-        
-        .fan-stopped {
-            transform: rotate(0deg);
-        }
-        
-        /* SVG Icons colors */
-        .icon-accent { stroke: var(--accent-cyan); fill: none; }
-        .icon-blue { stroke: var(--accent-blue); fill: none; }
-        .icon-orange { stroke: var(--accent-orange); fill: none; }
-        
-        /* Collapsible Styling */
-        summary::-webkit-details-marker {
-            display: none;
-        }
-        summary {
-            list-style: none;
-        }
-    </style>
-</head>
-<body>
-    
-    <!-- Top Header -->
-    <header class="header">
-        <div class="header-title">
-            <h1>วิสาหกิจชุมชนเสขะธรรม <span>• Smart Control</span></h1>
-            <p>ระบบควบคุมและติดตามข้อมูลอัจฉริยะ ต.ห้วยกะปิ อ.เมือง จ.ชลบุรี</p>
-        </div>
-        <div class="header-controls">
-            <!-- Connection status badge -->
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;">
-                <span class="status-dot" id="conn-dot" style="background-color: #ef4444;"></span>
-                <span id="conn-text">Disconnected</span>
-            </div>
-            
-            <!-- Theme toggle Switch -->
-            <label class="theme-switch" title="สลับโหมด มืด/สว่าง">
-                <input type="checkbox" id="theme-toggle">
-                <span class="slider"></span>
-            </label>
-        </div>
-    </header>
-    
-    <div class="container">
-        <!-- Tab navigation bar -->
         <nav class="tabs-nav">
             <button class="tab-btn active" onclick="openTab('dashboard')">Dashboard</button>
             <button class="tab-btn" onclick="openTab('egg-log')">บันทึกยอดเก็บไข่</button>
+            <button class="tab-btn" onclick="openTab('bsf-log')">บันทึกยอดหนอน BSF</button>
             <button class="tab-btn" onclick="openTab('presets')">ตั้งค่าโปรแกรมเป้าหมาย</button>
             <button class="tab-btn" onclick="openTab('charts')">ประวัติ & กราฟรายงาน</button>
         </nav>
-        
-        <!-- ==================== TAB 1: DASHBOARD ==================== -->
-        <div id="dashboard" class="tab-content active">
-            <!-- Metrics Cards Grid -->
-            <div class="grid-metrics">
-                <!-- Room 1 Temp -->
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span>อุณหภูมิห้องที่ 1</span>
-                        <svg width="20" height="20" viewBox="0 0 24 24" stroke-width="2" class="icon-orange"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 1 1 4 0Z"></path></svg>
-                    </div>
-                    <div class="metric-card-value">
-                        <span id="val-t1">--.-</span><span class="metric-card-unit">°C</span>
-                    </div>
-                    <div class="metric-card-footer">
-                        <span class="status-dot" id="status-r1"></span>
-                        <span id="text-status-r1">Loading...</span>
-                    </div>
-                </div>
-                
-                <!-- Room 1 Humidity -->
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span>ความชื้นห้องที่ 1</span>
-                        <svg width="20" height="20" viewBox="0 0 24 24" stroke-width="2" class="icon-blue"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
-                    </div>
-                    <div class="metric-card-value">
-                        <span id="val-h1">--.-</span><span class="metric-card-unit">%</span>
-                    </div>
-                    <div class="metric-card-footer">
-                        <span class="status-dot" id="status-r1-h"></span>
-                        <span id="text-status-r1-h">Loading...</span>
-                    </div>
-                </div>
-                
-                <!-- Room 2 Temp -->
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span>อุณหภูมิห้องที่ 2</span>
-                        <svg width="20" height="20" viewBox="0 0 24 24" stroke-width="2" class="icon-accent"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 1 1 4 0Z"></path></svg>
-                    </div>
-                    <div class="metric-card-value">
-                        <span id="val-t2">--.-</span><span class="metric-card-unit">°C</span>
-                    </div>
-                    <div class="metric-card-footer">
-                        <span class="status-dot" id="status-r2"></span>
-                        <span id="text-status-r2">Loading...</span>
-                    </div>
-                </div>
-                
-                <!-- Fan Status Card -->
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span>สถานะพัดลมระบายอากาศ</span>
-                        <svg id="fan-icon" width="20" height="20" viewBox="0 0 24 24" stroke-width="2" fill="none" stroke="currentColor" class="fan-stopped"><path d="M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path><path d="M12 2v4M12 18v4M4 12h4M16 12h4M12 6c2.5-1.5 4-4 4-4s-1.5 1.5-4 4Z"></path><path d="M12 18c-2.5 1.5-4 4-4 4s1.5-1.5 4-4ZM18 12c1.5 2.5 4 4 4 4s-1.5-1.5-4-4ZM6 12c-1.5-2.5-4-4-4-4s1.5 1.5 4 4Z"></path></svg>
-                    </div>
-                    <div class="metric-card-value">
-                        <span id="val-fan" style="color: var(--text-secondary);">STANDBY</span>
-                    </div>
-                    <div class="metric-card-footer">
-                        <span class="status-dot" id="status-fan" style="background-color: #64748b;"></span>
-                        <span id="text-status-fan">ระบบไม่ได้เดินโปรแกรม</span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Weather and comparison layout -->
-            <div class="grid-weather-comparison">
-                <!-- Weather info card -->
-                <div class="weather-card">
-                    <h3 class="section-title">
-                        <span>สภาพอากาศภายนอกพื้นที่</span>
-                        <span style="font-size: 12px; color: var(--text-secondary); font-weight: normal;">พิกัด ต.ห้วยกะปิ</span>
-                    </h3>
-                    <div class="weather-info">
-                        <div class="weather-item">
-                            <span style="font-size: 24px;">🌡️</span>
-                            <div class="weather-item-text">
-                                <p>อุณหภูมิภายนอก</p>
-                                <h4 id="wt-temp">--.- °C</h4>
-                            </div>
-                        </div>
-                        <div class="weather-item">
-                            <span style="font-size: 24px;">💧</span>
-                            <div class="weather-item-text">
-                                <p>ความชื้นภายนอก</p>
-                                <h4 id="wt-humi">-- %</h4>
-                            </div>
-                        </div>
-                        <div class="weather-item">
-                            <span style="font-size: 24px;">💨</span>
-                            <div class="weather-item-text">
-                                <p>ความเร็วลม</p>
-                                <h4 id="wt-wind">--.- km/h</h4>
-                            </div>
-                        </div>
-                        <div class="weather-item">
-                            <span style="font-size: 24px;">⛈️</span>
-                            <div class="weather-item-text">
-                                <p>ปริมาณน้ำฝน</p>
-                                <h4 id="wt-rain">--.- mm</h4>
-                            </div>
-                        </div>
-                    </div>
-                    <p style="font-size: 11px; color: var(--text-secondary); margin-top: 15px; margin-bottom: 0; text-align: right;" id="wt-update">
-                        ข้อมูลอัปเดตล่าสุด: --:--
-                    </p>
-                </div>
-                
-                <!-- Double-sided comparison card -->
-                <div class="comparison-card">
-                    <h3 class="section-title">เปรียบเทียบข้อมูล (ภายในห้อง 1 vs ภายนอก)</h3>
-                    
-                    <!-- Temp Comparison -->
-                    <div class="comparison-item">
-                        <div class="comparison-labels">
-                            <span>ภายในห้อง 1 (T1)</span>
-                            <span class="comparison-label-title">เปรียบเทียบอุณหภูมิ (°C)</span>
-                            <span>ภายนอก (ห้วยกะปิ)</span>
-                        </div>
-                        <div class="comparison-track">
-                            <!-- Left half: Inside -->
-                            <div class="comparison-half comparison-half-left">
-                                <div class="comparison-fill-left" id="comp-temp-left" style="width: 0%;">
-                                    <span class="comp-val" id="lbl-temp-left">--.- °C</span>
-                                </div>
-                            </div>
-                            <!-- Center Divider -->
-                            <div class="comparison-divider"></div>
-                            <!-- Right half: Outside -->
-                            <div class="comparison-half comparison-half-right">
-                                <div class="comparison-fill-right" id="comp-temp-right" style="width: 0%;">
-                                    <span class="comp-val" id="lbl-temp-right">--.- °C</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Humidity Comparison -->
-                    <div class="comparison-item">
-                        <div class="comparison-labels">
-                            <span>ภายในห้อง 1 (H1)</span>
-                            <span class="comparison-label-title">เปรียบเทียบความชื้น (%)</span>
-                            <span>ภายนอก (ห้วยกะปิ)</span>
-                        </div>
-                        <div class="comparison-track">
-                            <!-- Left half: Inside -->
-                            <div class="comparison-half comparison-half-left">
-                                <div class="comparison-fill-left" id="comp-humi-left" style="width: 0%; background: linear-gradient(to left, var(--accent-blue), #4f46e5);">
-                                    <span class="comp-val" id="lbl-humi-left">--.- %</span>
-                                </div>
-                            </div>
-                            <!-- Center Divider -->
-                            <div class="comparison-divider"></div>
-                            <!-- Right half: Outside -->
-                            <div class="comparison-half comparison-half-right">
-                                <div class="comparison-fill-right" id="comp-humi-right" style="width: 0%; background: linear-gradient(to right, var(--accent-cyan), #0d9488);">
-                                    <span class="comp-val" id="lbl-humi-right">--.- %</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- MQTT Live Log Console -->
-            <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px var(--shadow); margin-top: 25px;">
-                <h3 class="section-title" style="margin-bottom: 15px;">
-                    <span>MQTT Live Log Console (สัญญาณเชื่อมต่อสด)</span>
-                    <span style="font-size: 11px; font-weight: normal; color: var(--accent-cyan); cursor: pointer;" onclick="clearMqttConsole()">[ล้างล็อกหน้าจอ]</span>
-                </h3>
-                <div id="mqtt-console" style="background: #050811; border: 1px solid var(--border-color); border-radius: 8px; padding: 15px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #39ff14; height: 160px; overflow-y: auto; white-space: pre-wrap; box-sizing: border-box; line-height: 1.6;">[System] Live log console ready. Waiting for MQTT broker connection...</div>
             </div>
         </div>
         
-        <!-- ==================== TAB 2: EGG HARVESTING ==================== -->
-        <div id="egg-log" class="tab-content">
+        <!-- ==================== TAB 5: BSF HARVESTING ==================== -->
+        <div id="bsf-log" class="tab-content">
             <div class="egg-layout">
                 <!-- Form Box -->
                 <div class="form-card">
-                    <h3 class="section-title">บันทึกยอดเก็บไข่รายวัน</h3>
-                    <form id="egg-form" onsubmit="submitEggRecord(event)">
+                    <h3 class="section-title">บันทึกยอดผลิตหนอนแมลงวันลาย (BSF)</h3>
+                    <form id="bsf-form" onsubmit="submitBsfRecord(event)">
                         <div class="form-group">
-                            <label for="egg-date">วันที่เก็บไข่</label>
-                            <input type="date" id="egg-date" required>
+                            <label for="bsf-date">วันที่เก็บหนอน</label>
+                            <input type="date" id="bsf-date" required>
                         </div>
                         <div class="form-group">
-                            <label for="egg-count">จำนวนผลผลิต (ฟอง)</label>
-                            <input type="number" id="egg-count" min="0" required placeholder="เช่น 150">
+                            <label for="bsf-kg">ปริมาณที่เก็บได้ (กิโลกรัม)</label>
+                            <input type="number" step="0.01" id="bsf-kg" min="0" required placeholder="เช่น 15.50">
                         </div>
-                        <button type="submit" class="btn" id="btn-save-egg">บันทึกข้อมูล</button>
+                        <div class="form-group">
+                            <label for="bsf-notes">หมายเหตุ</label>
+                            <input type="text" id="bsf-notes" placeholder="เช่น สภาพดี, หนอนอ้วน">
+                        </div>
+                        <button type="submit" class="btn" id="btn-save-bsf">บันทึกข้อมูล</button>
                     </form>
                     
                     <div class="export-btns">
-                        <button class="btn btn-secondary" onclick="exportEggsToCSV()">Excel (CSV)</button>
-                        <button class="btn btn-secondary" onclick="exportEggsToPDF()">PDF Report</button>
+                        <button class="btn btn-secondary" onclick="exportBsfToCSV()">Excel (CSV)</button>
+                        <button class="btn btn-secondary" onclick="exportBsfToPDF()">PDF Report</button>
                     </div>
                 </div>
                 
                 <!-- Records Table -->
                 <div class="table-card">
-                    <h3 class="section-title">ประวัติการเก็บไข่ย้อนหลัง</h3>
+                    <h3 class="section-title">ประวัติการเก็บหนอน BSF ย้อนหลัง</h3>
                     <table>
                         <thead>
                             <tr>
                                 <th>วันที่</th>
-                                <th>ผลผลิต (ฟอง)</th>
+                                <th>ปริมาณ (กก.)</th>
+                                <th>หมายเหตุ</th>
                                 <th>เวลาบันทึกข้อมูล</th>
                             </tr>
                         </thead>
-                        <tbody id="egg-table-body">
+                        <tbody id="bsf-table-body">
                             <tr>
-                                <td colspan="3" style="text-align: center; color: var(--text-secondary);">กำลังดาวน์โหลดข้อมูลจาก Google Sheet...</td>
+                                <td colspan="4" style="text-align: center; color: var(--text-secondary);">กำลังดาวน์โหลดข้อมูลจาก Google Sheet...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -929,462 +170,88 @@
         <!-- ==================== TAB 3: PROGRAM CONFIGURATION ==================== -->
         <div id="presets" class="tab-content">
             <!-- Standby Mode Selector -->
-            <div class="standby-card" id="standby-box">
-                <div class="standby-text">
-                    <h3>ปิดรับโปรแกรมควบคุม (Standby Mode)</h3>
-                    <p>พัดลมและรีเลย์สั่งตัดไฟทุกกรณีเพื่อความปลอดภัย ไม่ใช้เกณฑ์ควบคุมใดๆ</p>
-                </div>
-                <button class="btn btn-standby" onclick="activateProgram(0)">สั่งเข้า Standby</button>
-            </div>
-            
-            <!-- Presets Grid -->
-            <div class="programs-grid">
-                <!-- Program 1 -->
-                <div class="program-card" id="card-prog-1">
-                    <span class="program-badge">Active</span>
-                    <div class="program-title">โปรแกรมที่ 1</div>
-                    <form onsubmit="saveProgramPreset(event, 1)">
-                        <div class="form-group">
-                            <label>อุณหภูมิเป้าหมาย (SetPoint)</label>
-                            <input type="number" step="0.1" id="temp-prog-1" required placeholder="เช่น 35.0">
-                        </div>
-                        <div class="form-group">
-                            <label>ส่วนต่างการทำงาน (Hysteresis)</label>
-                            <input type="number" step="0.1" id="hyst-prog-1" required placeholder="เช่น 1.0">
-                        </div>
-                        <div class="program-controls">
-                            <button type="submit" class="btn btn-secondary">บันทึกค่า</button>
-                            <button type="button" class="btn" onclick="activateProgram(1)">เริ่มรัน</button>
-                        </div>
-                    </form>
-                </div>
-                
-                <!-- Program 2 -->
-                <div class="program-card" id="card-prog-2">
-                    <span class="program-badge">Active</span>
-                    <div class="program-title">โปรแกรมที่ 2</div>
-                    <form onsubmit="saveProgramPreset(event, 2)">
-                        <div class="form-group">
-                            <label>อุณหภูมิเป้าหมาย (SetPoint)</label>
-                            <input type="number" step="0.1" id="temp-prog-2" required placeholder="เช่น 38.0">
-                        </div>
-                        <div class="form-group">
-                            <label>ส่วนต่างการทำงาน (Hysteresis)</label>
-                            <input type="number" step="0.1" id="hyst-prog-2" required placeholder="เช่น 1.0">
-                        </div>
-                        <div class="program-controls">
-                            <button type="submit" class="btn btn-secondary">บันทึกค่า</button>
-                            <button type="button" class="btn" onclick="activateProgram(2)">เริ่มรัน</button>
-                        </div>
-                    </form>
-                </div>
-                
-                <!-- Program 3 -->
-                <div class="program-card" id="card-prog-3">
-                    <span class="program-badge">Active</span>
-                    <div class="program-title">โปรแกรมที่ 3</div>
-                    <form onsubmit="saveProgramPreset(event, 3)">
-                        <div class="form-group">
-                            <label>อุณหภูมิเป้าหมาย (SetPoint)</label>
-                            <input type="number" step="0.1" id="temp-prog-3" required placeholder="เช่น 40.0">
-                        </div>
-                        <div class="form-group">
-                            <label>ส่วนต่างการทำงาน (Hysteresis)</label>
-                            <input type="number" step="0.1" id="hyst-prog-3" required placeholder="เช่น 1.0">
-                        </div>
-                        <div class="program-controls">
-                            <button type="submit" class="btn btn-secondary">บันทึกค่า</button>
-                            <button type="button" class="btn" onclick="activateProgram(3)">เริ่มรัน</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-        
-        <!-- ==================== TAB 4: CHARTS & REPORTS ==================== -->
-        <div id="charts" class="tab-content">
-            <div style="display: flex; justify-content: flex-end; margin-bottom: 15px; gap: 10px;">
-                <select id="chart-select" style="padding: 8px 12px; border-radius: 6px; border:1px solid var(--border-color); background: var(--card-bg); color: var(--text-primary); font-family: inherit;" onchange="loadChartData()">
-                    <option value="daily">ดูย้อนหลัง 7 วัน (รายวัน)</option>
-                    <option value="monthly">ดูย้อนหลัง 12 เดือน (รายเดือน)</option>
-                </select>
-            </div>
-            
-            <div class="chart-container">
-                <canvas id="history-chart"></canvas>
-            </div>
-            
-            <!-- Collapsible Raw Data Table -->
-            <details style="margin-top: 25px; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; box-shadow: 0 4px 12px var(--shadow);">
-                <summary style="font-size: 16px; font-weight: 600; cursor: pointer; color: var(--accent-cyan); outline: none; list-style: none; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="display: flex; align-items: center; gap: 8px;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                        แสดงตารางข้อมูลดิบย้อนหลัง (30 รายการล่าสุด)
-                    </span>
-                    <span style="font-size: 12px; font-weight: normal; color: var(--text-secondary);" id="toggle-lbl">คลิกเพื่อ [เปิดแสดงตาราง]</span>
-                </summary>
-                <div style="overflow-x: auto; margin-top: 20px;">
-                    <table style="width: 100%; border-collapse: collapse;">
-                        <thead>
-                            <tr>
-                                <th>เวลาบันทึก</th>
-                                <th>ห้อง 1 อุณหภูมิ (°C)</th>
-                                <th>ห้อง 1 ความชื้น (%)</th>
-                                <th>ห้อง 2 อุณหภูมิ (°C)</th>
-                                <th>อุณหภูมิสูงสุด (°C)</th>
-                                <th>ความชื้นสูงสุด (%)</th>
-                            </tr>
-                        </thead>
-                        <tbody id="raw-table-body">
-                            <tr>
-                                <td colspan="6" style="text-align: center; color: var(--text-secondary);">ยังไม่มีข้อมูล/กำลังดาวน์โหลด...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </details>
-        </div>
-    </div>
-    
-    <script>
-        // Apps Script configuration from project URL
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbxTtGNZ5FcmadezL04pN-1QM-k22IRbSl5KRyczzbKxRqO-5bAZmap9kRFBMA0PFvkx/exec";
-        
-        // HiveMQ Cloud MQTT connection credentials
-        const MQTT_CONFIG = {
-            host: "f7df4fd55ada408e8ecba309a8edb487.s1.eu.hivemq.cloud",
-            port: 8884, // Secure WebSockets
-            clientId: "WebDashboard_" + Math.random().toString(16).substr(2, 8),
-            username: "ASTM50996",
-            password: "ASTM509964Ds",
-            topicData: "dryer/data5",
-            topicCommand: "dryer/command"
-        };
-        
-        let mqttClient = null;
         let chartInstance = null;
         let weatherData = { temp: 0.0, humi: 0 };
         let eggRecords = [];
+        let bsfRecords = [];
         
         // Console logging helper
         function logMqttEvent(source, msg) {
-            const consoleBox = document.getElementById('mqtt-console');
-            if (!consoleBox) return;
-            const timeStr = new Date().toLocaleTimeString('th-TH');
-            
-            let payloadText = typeof msg === 'object' ? JSON.stringify(msg) : msg;
-            consoleBox.innerText += `\n${timeStr} [${source}] ${payloadText}`;
-            
-            // Limit lines to 100 to prevent performance lag
-            const lines = consoleBox.innerText.split('\n');
-            if (lines.length > 100) {
-                consoleBox.innerText = lines.slice(lines.length - 100).join('\n');
-            }
-            
-            consoleBox.scrollTop = consoleBox.scrollHeight;
-        }
-        
-        function clearMqttConsole() {
-            const consoleBox = document.getElementById('mqtt-console');
-            if (consoleBox) {
-                consoleBox.innerText = "[Console cleared]";
-            }
-        }
-        
-        // Tab switching
-        function openTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            
-            document.getElementById(tabId).classList.add('active');
-            event.currentTarget.classList.add('active');
             
             if (tabId === 'egg-log') {
                 loadEggRecords();
+            } else if (tabId === 'bsf-log') {
+                loadBsfRecords();
             } else if (tabId === 'presets') {
                 loadProgramSettings();
             } else if (tabId === 'charts') {
-                loadChartData();
-            }
-        }
-        
-        // Theme switching logic
-        const themeToggle = document.getElementById('theme-toggle');
-        themeToggle.addEventListener('change', () => {
-            if (themeToggle.checked) {
-                document.documentElement.setAttribute('data-theme', 'light');
-                localStorage.setItem('theme', 'light');
-            } else {
-                document.documentElement.setAttribute('data-theme', 'dark');
-                localStorage.setItem('theme', 'dark');
-            }
-            if (chartInstance) loadChartData(); 
-        });
-        
-        // Load theme from cache
-        const savedTheme = localStorage.getItem('theme') || 'dark';
-        if (savedTheme === 'light') {
-            themeToggle.checked = true;
-            document.documentElement.setAttribute('data-theme', 'light');
-        }
         
         // Set default date in form
         document.getElementById('egg-date').valueAsDate = new Date();
+        document.getElementById('bsf-date').valueAsDate = new Date();
         
         // Details summary toggle text handler
         const detailsEl = document.querySelector('details');
-        const toggleLbl = document.getElementById('toggle-lbl');
-        if (detailsEl && toggleLbl) {
-            detailsEl.addEventListener('toggle', () => {
-                if (detailsEl.open) {
-                    toggleLbl.innerText = "คลิกเพื่อ [ซ่อนตาราง]";
-                } else {
-                    toggleLbl.innerText = "คลิกเพื่อ [เปิดแสดงตาราง]";
-                }
-            });
         }
         
         // ─────────────────────────────────────────────────────────────
-        //  MQTT: Real-Time Connection
+        //  BSF HARVESTING: Logging & Export
         // ─────────────────────────────────────────────────────────────
-        function initMQTT() {
-            const url = `wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}/mqtt`;
-            logMqttEvent("System", `Connecting to ${MQTT_CONFIG.host}...`);
+        function loadBsfRecords() {
+            const tableBody = document.getElementById('bsf-table-body');
+            tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-secondary);">กำลังเรียกข้อมูล...</td></tr>';
             
-            mqttClient = mqtt.connect(url, {
-                clientId: MQTT_CONFIG.clientId,
-                username: MQTT_CONFIG.username,
-                password: MQTT_CONFIG.password,
-                clean: true,
-                rejectUnauthorized: false
-            });
-            
-            mqttClient.on('connect', () => {
-                logMqttEvent("Broker", "Connected to TLS port 8884 successfully.");
-                document.getElementById('conn-dot').style.backgroundColor = '#10b981';
-                document.getElementById('conn-text').innerText = "Connected";
-                
-                mqttClient.subscribe(MQTT_CONFIG.topicData);
-                logMqttEvent("System", `Subscribed to topic: ${MQTT_CONFIG.topicData}`);
-            });
-            
-            mqttClient.on('message', (topic, payload) => {
-                const msgStr = payload.toString();
-                logMqttEvent("Received", `Topic: ${topic} -> ${msgStr}`);
-                
-                if (topic === MQTT_CONFIG.topicData) {
-                    try {
-                        const data = JSON.parse(msgStr);
-                        updateRealtimeDashboard(data);
-                    } catch(e) {
-                        console.error("Failed to parse JSON MQTT message: " + e);
-                    }
-                }
-            });
-            
-            mqttClient.on('close', () => {
-                logMqttEvent("Broker", "Connection closed.");
-                document.getElementById('conn-dot').style.backgroundColor = '#ef4444';
-                document.getElementById('conn-text').innerText = "Disconnected";
-            });
-            
-            mqttClient.on('error', (err) => {
-                logMqttEvent("Error", err.toString());
-            });
-        }
-        
-        function updateRealtimeDashboard(data) {
-            // 1. T1
-            if (data.sht31_ok) {
-                document.getElementById('val-t1').innerText = parseFloat(data.temp_Room1).toFixed(1);
-                document.getElementById('status-r1').className = "status-dot status-ok";
-                document.getElementById('text-status-r1').innerText = "ปกติ";
-                
-                // H1
-                document.getElementById('val-h1').innerText = parseFloat(data.humidity_Room1).toFixed(1);
-                document.getElementById('status-r1-h').className = "status-dot status-ok";
-                document.getElementById('text-status-r1-h').innerText = "ปกติ";
-            } else {
-                document.getElementById('val-t1').innerText = "--.-";
-                document.getElementById('status-r1').className = "status-dot status-err";
-                document.getElementById('text-status-r1').innerText = "เซนเซอร์ขัดข้อง";
-                
-                document.getElementById('val-h1').innerText = "--.-";
-                document.getElementById('status-r1-h').className = "status-dot status-err";
-                document.getElementById('text-status-r1-h').innerText = "เซนเซอร์ขัดข้อง";
-            }
-            
-            // 2. T2
-            if (data.ds18_ok) {
-                document.getElementById('val-t2').innerText = parseFloat(data.temp_Room2).toFixed(1);
-                document.getElementById('status-r2').className = "status-dot status-ok";
-                document.getElementById('text-status-r2').innerText = "ปกติ";
-            } else {
-                document.getElementById('val-t2').innerText = "--.-";
-                document.getElementById('status-r2').className = "status-dot status-err";
-                document.getElementById('text-status-r2').innerText = "เซนเซอร์ขัดข้อง";
-            }
-            
-            // 3. Fan Status
-            const fan = document.getElementById('val-fan');
-            const fanStatDot = document.getElementById('status-fan');
-            const fanStatText = document.getElementById('text-status-fan');
-            const fanIcon = document.getElementById('fan-icon');
-            
-            if (data.sys_state.indexOf("Fan ON") >= 0) {
-                fan.innerText = "RUNNING";
-                fan.style.color = "var(--accent-green)";
-                fanStatDot.style.backgroundColor = "var(--accent-green)";
-                fanIcon.className = "fan-icon-animated";
-            } else {
-                fan.innerText = "STOPPED";
-                fan.style.color = "var(--text-secondary)";
-                fanStatDot.style.backgroundColor = "#64748b";
-                fanIcon.className = "fan-stopped";
-            }
-            fanStatText.innerText = data.sys_state;
-            
-            // 4. Update program highlights
-            let prog = 0;
-            if (data.sys_state.indexOf("Prog 1") >= 0) prog = 1;
-            else if (data.sys_state.indexOf("Prog 2") >= 0) prog = 2;
-            else if (data.sys_state.indexOf("Prog 3") >= 0) prog = 3;
-            updateActiveProgramHighlight(prog);
-            
-            // 5. Update comparison bar
-            updateComparisonBars(data.temp_Room1, data.humidity_Room1, data.sht31_ok);
-        }
-        
-        // ─────────────────────────────────────────────────────────────
-        //  WEATHER: Get and compare local weather
-        // ─────────────────────────────────────────────────────────────
-        function loadWeatherData() {
-            const url = `${GAS_URL}?action=weather`;
-            console.log("[Weather] Fetching Open-Meteo Proxy...");
-            
-            fetch(url)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error("Weather proxy failed: " + data.error);
-                        return;
-                    }
-                    weatherData.temp = parseFloat(data.temp);
-                    weatherData.humi = parseInt(data.humi);
-                    
-                    document.getElementById('wt-temp').innerText = weatherData.temp.toFixed(1) + " °C";
-                    document.getElementById('wt-humi').innerText = weatherData.humi + " %";
-                    document.getElementById('wt-wind').innerText = parseFloat(data.wind).toFixed(1) + " km/h";
-                    document.getElementById('wt-rain').innerText = parseFloat(data.rain).toFixed(1) + " mm";
-                    
-                    const updateDate = new Date();
-                    document.getElementById('wt-update').innerText = "ข้อมูลอัปเดตล่าสุด: " + 
-                        updateDate.getHours().toString().padStart(2, '0') + ":" + 
-                        updateDate.getMinutes().toString().padStart(2, '0');
-                        
-                    // trigger comparison redraw
-                    const t1_txt = document.getElementById('val-t1').innerText;
-                    const h1_txt = document.getElementById('val-h1').innerText;
-                    if (t1_txt !== "--.-") {
-                        updateComparisonBars(parseFloat(t1_txt), parseFloat(h1_txt), true);
-                    }
-                })
-                .catch(err => console.error("Failed to load weather: " + err));
-        }
-        
-        function updateComparisonBars(t1, h1, isOk) {
-            const tempLeft = document.getElementById('comp-temp-left');
-            const tempRight = document.getElementById('comp-temp-right');
-            const humiLeft = document.getElementById('comp-humi-left');
-            const humiRight = document.getElementById('comp-humi-right');
-            
-            const lblTempLeft = document.getElementById('lbl-temp-left');
-            const lblTempRight = document.getElementById('lbl-temp-right');
-            const lblHumiLeft = document.getElementById('lbl-humi-left');
-            const lblHumiRight = document.getElementById('lbl-humi-right');
-            
-            if (isOk) {
-                // Temp Left (Inside) - 0 to 50 scale
-                let t1_pct = Math.max(0, Math.min(100, (t1 / 50.0) * 100));
-                tempLeft.style.width = t1_pct + "%";
-                lblTempLeft.innerText = t1.toFixed(1) + " °C";
-                
-                // Humi Left (Inside) - 0 to 100 scale
-                let h1_pct = Math.max(0, Math.min(100, h1));
-                humiLeft.style.width = h1_pct + "%";
-                lblHumiLeft.innerText = h1.toFixed(1) + " %";
-            } else {
-                tempLeft.style.width = "0%";
-                lblTempLeft.innerText = "ERR";
-                humiLeft.style.width = "0%";
-                lblHumiLeft.innerText = "ERR";
-            }
-            
-            // Weather Temp Right (Outside)
-            if (weatherData.temp > 0) {
-                let text_pct = Math.max(0, Math.min(100, (weatherData.temp / 50.0) * 100));
-                tempRight.style.width = text_pct + "%";
-                lblTempRight.innerText = weatherData.temp.toFixed(1) + " °C";
-                
-                let hext_pct = Math.max(0, Math.min(100, weatherData.humi));
-                humiRight.style.width = hext_pct + "%";
-                lblHumiRight.innerText = weatherData.humi + " %";
-            }
-        }
-        
-        // ─────────────────────────────────────────────────────────────
-        //  EGG HARVESTING: Logging & Export
-        // ─────────────────────────────────────────────────────────────
-        function loadEggRecords() {
-            const tableBody = document.getElementById('egg-table-body');
-            tableBody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-secondary);">กำลังเรียกข้อมูล...</td></tr>';
-            
-            fetch(`${GAS_URL}?action=get_eggs`)
+            fetch(`${GAS_URL}?action=get_bsf`)
                 .then(res => res.json())
                 .then(data => {
                     tableBody.innerHTML = '';
-                    eggRecords = data.rows || [];
+                    bsfRecords = data.rows || [];
                     
-                    if (eggRecords.length === 0) {
-                        tableBody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-secondary);">ไม่มีข้อมูลในระบบ</td></tr>';
+                    if (bsfRecords.length === 0) {
+                        tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-secondary);">ไม่มีข้อมูลในระบบ</td></tr>';
                         return;
                     }
                     
-                    eggRecords.sort((a,b) => b.date.localeCompare(a.date));
+                    bsfRecords.sort((a,b) => b.date.localeCompare(a.date));
                     
-                    eggRecords.forEach(r => {
+                    bsfRecords.forEach(r => {
                         const tr = document.createElement('tr');
                         const timeLogged = r.timestamp ? new Date(r.timestamp).toLocaleString('th-TH') : '--:--';
+                        const notesVal = r.notes || '';
                         
                         tr.innerHTML = `<td><b>${r.date}</b></td>` +
-                                       `<td>${r.production_eggs} ฟอง</td>` +
+                                       `<td>${parseFloat(r.production_kg).toFixed(2)} กก.</td>` +
+                                       `<td>${notesVal}</td>` +
                                        `<td>${timeLogged}</td>`;
                         tableBody.appendChild(tr);
                     });
                 })
                 .catch(err => {
-                    tableBody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--accent-red);">เกิดข้อผิดพลาดในการเชื่อมต่อ</td></tr>';
+                    tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--accent-red);">เกิดข้อผิดพลาดในการเชื่อมต่อ</td></tr>';
                 });
         }
         
-        function submitEggRecord(e) {
+        function submitBsfRecord(e) {
             e.preventDefault();
-            const date = document.getElementById('egg-date').value;
-            const eggs = document.getElementById('egg-count').value;
-            const btn = document.getElementById('btn-save-egg');
+            const date = document.getElementById('bsf-date').value;
+            const kg = document.getElementById('bsf-kg').value;
+            const notes = encodeURIComponent(document.getElementById('bsf-notes').value);
+            const btn = document.getElementById('btn-save-bsf');
             
             btn.innerText = "กำลังบันทึก...";
             btn.disabled = true;
             
-            fetch(`${GAS_URL}?action=add_egg&date=${date}&eggs=${eggs}`)
+            fetch(`${GAS_URL}?action=add_bsf&date=${date}&kg=${kg}&notes=${notes}`)
                 .then(res => res.json())
                 .then(data => {
                     btn.innerText = "บันทึกข้อมูล";
                     btn.disabled = false;
                     
                     if (data.status === 'ok') {
-                        alert("บันทึกข้อมูลเก็บไข่สำเร็จ!");
-                        loadEggRecords();
+                        alert("บันทึกข้อมูลผลผลิตหนอน BSF สำเร็จ!");
+                        document.getElementById('bsf-notes').value = '';
+                        document.getElementById('bsf-kg').value = '';
+                        loadBsfRecords();
                     } else {
                         alert("เกิดข้อผิดพลาด: " + data.msg);
                     }
@@ -1396,312 +263,59 @@
                 });
         }
         
-        function exportEggsToCSV() {
-            if (eggRecords.length === 0) return alert("ไม่มีข้อมูลที่สามารถนำออกได้");
+        function exportBsfToCSV() {
+            if (bsfRecords.length === 0) return alert("ไม่มีข้อมูลที่สามารถนำออกได้");
             
             let csv = "\uFEFF"; 
-            csv += "วันที่,ยอดผลิต(ฟอง),เวลาบันทึก\r\n";
+            csv += "วันที่,ปริมาณ(กิโลกรัม),หมายเหตุ,เวลาบันทึก\r\n";
             
-            eggRecords.forEach(r => {
+            bsfRecords.forEach(r => {
                 const timeLogged = r.timestamp ? new Date(r.timestamp).toLocaleString('th-TH') : '';
-                csv += `${r.date},${r.production_eggs},"${timeLogged}"\r\n`;
+                const notesVal = r.notes ? r.notes.replace(/"/g, '""') : '';
+                csv += `${r.date},${r.production_kg},"${notesVal}","${timeLogged}"\r\n`;
             });
             
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             const url = URL.createObjectURL(blob);
             link.setAttribute("href", url);
-            link.setAttribute("download", `egg_production_report_${new Date().toISOString().slice(0,10)}.csv`);
+            link.setAttribute("download", `bsf_production_report_${new Date().toISOString().slice(0,10)}.csv`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
         }
         
-        // Custom dates formatter
-        function getFmtDate() {
-            return new Date().toISOString().slice(0,10);
-        }
-        
-        function exportEggsToPDF() {
-            if (eggRecords.length === 0) return alert("ไม่มีข้อมูลที่สามารถนำออกได้");
+        function exportBsfToPDF() {
+            if (bsfRecords.length === 0) return alert("ไม่มีข้อมูลที่สามารถนำออกได้");
             
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
             
-            doc.text("รายงานการเก็บผลผลิตไข่ประจำวัน - Eve_Monitor2026", 14, 15);
+            doc.text("รายงานการเก็บผลผลิตหนอนแมลงวันลาย (BSF) - วิสาหกิจชุมชนเสขะธรรม", 14, 15);
             doc.text("ที่อยู่ ต.ห้วยกะปิ อ.เมือง จ.ชลบุรี", 14, 22);
             
-            const body = eggRecords.map(r => [
+            const body = bsfRecords.map(r => [
                 r.date,
-                r.production_eggs + " ฟอง",
+                parseFloat(r.production_kg).toFixed(2) + " กก.",
+                r.notes || '',
                 r.timestamp ? new Date(r.timestamp).toLocaleString('th-TH') : ''
             ]);
             
             doc.autoTable({
-                head: [['วันที่', 'ผลผลิต (ฟอง)', 'เวลาลงข้อมูล']],
+                head: [['วันที่', 'ปริมาณ (กก.)', 'หมายเหตุ', 'เวลาลงข้อมูล']],
                 body: body,
                 startY: 28,
                 theme: 'striped',
                 headStyles: { fillColor: [26, 58, 92] }
             });
             
-            doc.save(`egg_report_${getFmtDate()}.pdf`);
+            doc.save(`bsf_report_${getFmtDate()}.pdf`);
         }
         
         // ─────────────────────────────────────────────────────────────
         //  PRESETS: Settings Management
         // ─────────────────────────────────────────────────────────────
         function loadProgramSettings() {
-            fetch(`${GAS_URL}?action=get_settings`)
-                .then(res => res.json())
-                .then(data => {
-                    const settings = data.settings || [];
-                    settings.forEach(s => {
-                        const progNum = s.program;
-                        const inputTemp = document.getElementById(`temp-prog-${progNum}`);
-                        const inputHyst = document.getElementById(`hyst-prog-${progNum}`);
-                        if (inputTemp) inputTemp.value = parseFloat(s.target_temp).toFixed(1);
-                        if (inputHyst) inputHyst.value = parseFloat(s.hysteresis).toFixed(1);
-                        
-                        if (s.is_active === true || s.is_active === 'TRUE') {
-                            updateActiveProgramHighlight(progNum);
-                        }
-                    });
-                })
-                .catch(err => console.error("Error loading program settings: " + err));
-        }
-        
-        function saveProgramPreset(e, prog) {
-            e.preventDefault();
-            const temp = document.getElementById(`temp-prog-${prog}`).value;
-            const hyst = document.getElementById(`hyst-prog-${prog}`).value;
-            
-            fetch(`${GAS_URL}?action=save_program&program=${prog}&temp=${temp}&hyst=${hyst}`)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === 'ok') {
-                        if (mqttClient && mqttClient.connected) {
-                            const cmd = JSON.stringify({
-                                action: "save_program",
-                                program: prog,
-                                target_temp: parseFloat(temp),
-                                hysteresis: parseFloat(hyst)
-                            });
-                            mqttClient.publish(MQTT_CONFIG.topicCommand, cmd);
-                            logMqttEvent("Publish", `Sent: ${cmd}`);
-                        }
-                        alert(`บันทึกโปรแกรมที่ ${prog} สำเร็จ!`);
-                    } else {
-                        alert("เกิดข้อผิดพลาดในการบันทึกฐานข้อมูล: " + data.msg);
-                    }
-                })
-                .catch(err => alert("ล้มเหลวในการเชื่อมต่อเพื่อบันทึกค่า"));
-        }
-        
-        function activateProgram(prog) {
-            fetch(`${GAS_URL}?action=select_program&program=${prog}`)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === 'ok') {
-                        if (mqttClient && mqttClient.connected) {
-                            const cmd = JSON.stringify({
-                                action: "select_program",
-                                program: prog
-                            });
-                            mqttClient.publish(MQTT_CONFIG.topicCommand, cmd);
-                            logMqttEvent("Publish", `Sent: ${cmd}`);
-                        }
-                        updateActiveProgramHighlight(prog);
-                        if (prog === 0) {
-                            alert("สลับไปใช้โหมด Standby เรียบร้อย!");
-                        } else {
-                            alert(`เริ่มใช้งานโปรแกรมที่ ${prog} สำเร็จ!`);
-                        }
-                    } else {
-                        alert("เกิดข้อผิดพลาดในการเลือกโปรแกรม: " + data.msg);
-                    }
-                })
-                .catch(err => alert("ล้มเหลวในการเปลี่ยนโปรแกรมทำงาน"));
-        }
-        
-        function updateActiveProgramHighlight(progNum) {
-            document.querySelectorAll('.program-card').forEach(c => c.classList.remove('active'));
-            document.getElementById('standby-box').classList.remove('active');
-            
-            if (progNum === 0) {
-                document.getElementById('standby-box').classList.add('active');
-            } else {
-                const card = document.getElementById(`card-prog-${progNum}`);
-                if (card) card.classList.add('active');
-            }
-        }
-        
-        // ─────────────────────────────────────────────────────────────
-        //  REPORTS: Graph Loading & Raw Data Table (Chart.js)
-        // ─────────────────────────────────────────────────────────────
-        function loadChartData() {
-            const chartSelect = document.getElementById('chart-select').value;
-            const action = chartSelect === 'daily' ? 'daily' : 'monthly';
-            
-            // Load Charts
-            fetch(`${GAS_URL}?action=${action}`)
-                .then(res => res.json())
-                .then(data => {
-                    const rows = data.rows || [];
-                    if (rows.length === 0) return;
-                    
-                    const labels = [];
-                    const temp1 = [];
-                    const temp2 = [];
-                    const humi1 = [];
-                    
-                    rows.forEach(r => {
-                        labels.push(action === 'daily' ? r.date.slice(5) : r.month);
-                        temp1.push(safeParse(r.day_temp1_avg));
-                        temp2.push(safeParse(r.day_temp2_avg));
-                        humi1.push(safeParse(r.day_humi1_avg));
-                    });
-                    
-                    drawChart(labels, temp1, temp2, humi1);
-                })
-                .catch(err => console.error("Error loading chart data: " + err));
-                
-            // Load Collapsible Raw Data Table (latest 30 rows)
-            loadRawDataTable();
-        }
-        
-        function loadRawDataTable() {
-            const rawTableBody = document.getElementById('raw-table-body');
-            rawTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">กำลังดาวน์โหลดตารางข้อมูลดิบ...</td></tr>';
-            
-            fetch(`${GAS_URL}?action=raw&limit=30`)
-                .then(res => res.json())
-                .then(data => {
-                    rawTableBody.innerHTML = '';
-                    const rows = data.rows || [];
-                    
-                    if (rows.length === 0) {
-                        rawTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">ไม่มีข้อมูลดิบแสดงผล</td></tr>';
-                        return;
-                    }
-                    
-                    // Sort descending by time
-                    rows.sort((a, b) => b.time.localeCompare(a.time));
-                    
-                    rows.forEach(r => {
-                        const tr = document.createElement('tr');
-                        
-                        const t1 = r.temp_Room1 !== undefined && r.temp_Room1 !== "ERR" && r.temp_Room1 !== "" ? parseFloat(r.temp_Room1).toFixed(1) + " °C" : "ERR";
-                        const h1 = r.humidity_Room1 !== undefined && r.humidity_Room1 !== "ERR" && r.humidity_Room1 !== "" ? parseFloat(r.humidity_Room1).toFixed(1) + " %" : "ERR";
-                        const t2 = r.temp_Room2 !== undefined && r.temp_Room2 !== "ERR" && r.temp_Room2 !== "" ? parseFloat(r.temp_Room2).toFixed(1) + " °C" : "ERR";
-                        
-                        const max_t = r.max_temp !== undefined && r.max_temp !== "" ? parseFloat(r.max_temp).toFixed(1) + " °C" : "0.0 °C";
-                        const max_h = r.max_humidity !== undefined && r.max_humidity !== "" ? parseFloat(r.max_humidity).toFixed(1) + " %" : "0.0 %";
-                        
-                        tr.innerHTML = `<td><b>${r.time}</b></td>` +
-                                       `<td>${t1}</td>` +
-                                       `<td>${h1}</td>` +
-                                       `<td>${t2}</td>` +
-                                       `<td>${max_t}</td>` +
-                                       `<td>${max_h}</td>`;
-                        rawTableBody.appendChild(tr);
-                    });
-                })
-                .catch(err => {
-                    rawTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--accent-red);">เกิดข้อผิดพลาดในการโหลดตารางข้อมูลดิบ</td></tr>';
-                });
-        }
-        
-        function safeParse(val) {
-            if (val === null || val === undefined || val === '') return null;
-            return parseFloat(val);
-        }
-        
-        function drawChart(labels, temp1, temp2, humi1) {
-            const ctx = document.getElementById('history-chart').getContext('2d');
-            
-            if (chartInstance) {
-                chartInstance.destroy();
-            }
-            
-            const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            const labelColor = isLight ? '#4b5563' : '#a3b8cc';
-            const gridColor = isLight ? '#e5e7eb' : '#1f2c4a';
-            
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'ห้อง 1 อุณหภูมิเฉลี่ย (°C)',
-                            data: temp1,
-                            borderColor: '#ff9500',
-                            backgroundColor: 'rgba(255, 149, 0, 0.1)',
-                            borderWidth: 2,
-                            tension: 0.3,
-                            yAxisID: 'y-temp'
-                        },
-                        {
-                            label: 'ห้อง 2 อุณหภูมิเฉลี่ย (°C)',
-                            data: temp2,
-                            borderColor: '#00ffcc',
-                            backgroundColor: 'rgba(0, 255, 204, 0.1)',
-                            borderWidth: 2,
-                            tension: 0.3,
-                            yAxisID: 'y-temp'
-                        },
-                        {
-                            label: 'ห้อง 1 ความชื้นเฉลี่ย (%)',
-                            data: humi1,
-                            borderColor: '#00d2ff',
-                            backgroundColor: 'rgba(0, 210, 255, 0.1)',
-                            borderWidth: 2,
-                            borderDash: [5, 5],
-                            tension: 0.3,
-                            yAxisID: 'y-humi'
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            grid: { color: gridColor },
-                            ticks: { color: labelColor }
-                        },
-                        'y-temp': {
-                            type: 'linear',
-                            position: 'left',
-                            title: { display: true, text: 'อุณหภูมิ (°C)', color: labelColor },
-                            grid: { color: gridColor },
-                            ticks: { color: labelColor }
-                        },
-                        'y-humi': {
-                            type: 'linear',
-                            position: 'right',
-                            title: { display: true, text: 'ความชื้น (%)', color: labelColor },
-                            grid: { drawOnChartArea: false }, 
-                            ticks: { color: labelColor }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            labels: { color: labelColor }
-                        }
-                    }
-                }
-            });
-        }
-        
-        // Initial setup on window load
-        window.onload = () => {
-            initMQTT();
-            loadWeatherData();
-            setInterval(loadWeatherData, 600000);
-        };
-    </script>
 </body>
 </html>
